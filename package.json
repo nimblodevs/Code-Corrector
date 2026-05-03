@@ -1,0 +1,22 @@
+{
+  "name": "medicore-hms",
+  "version": "0.1.0",
+  "license": "MIT",
+  "scripts": {
+    "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
+    "api:dev": "pnpm --filter @workspace/api-server dev",
+    "api:start": "pnpm --filter @workspace/api-server start",
+    "client:dev": "pnpm --filter @workspace/medicore-hms dev",
+    "client:build": "pnpm --filter @workspace/medicore-hms build",
+    "client:serve": "pnpm --filter @workspace/medicore-hms serve",
+    "dev": "pnpm --parallel --filter @workspace/api-server --filter @workspace/medicore-hms dev",
+    "format": "pnpm -r --if-present format",
+    "format:check": "pnpm -r --if-present format:check",
+    "lint": "pnpm -r --if-present lint",
+    "lint:fix": "pnpm -r --if-present lint:fix"
+  },
+  "private": true,
+  "devDependencies": {
+    "prettier": "^3.8.1"
+  }
+}
