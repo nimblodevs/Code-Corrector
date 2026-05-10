@@ -4,12 +4,13 @@ const EMPTY_REG = {
   maritalStatus:"Single", nationality:"Kenyan", primaryLanguage:"English",
   religion:"Christianity", occupation:"",
   altPhone:"", email:"",
-  address:"", city:"", state:"", country:"Nigeria",
-  nokName:"", nokRelationship:"Spouse", nokPhone:"", nokAddress:"",
-  ecSameAsNok:true, ecName:"", ecRelationship:"Spouse", ecPhone:"",
+  address:"", city:"", state:"", postalCode:"", country:"Nigeria",
+  nokName:"", nokRelationship:"Spouse", nokPhone:"", nokAddress:"", nokEmail:"",
+  ecSameAsNok:true, ecName:"", ecRelationship:"Spouse", ecPhone:"", ecEmail:"",
   category:"Cash", corporateOrg:"Safaricom", corporateStaffId:"", corporateEmail:"",
   insuranceProvider:"NHIF", insuranceMemberNo:"", insurancePolicyNo:"", insuranceExpiry:"",
-  consentTreatment:false, consentData:false,
+  consentTreatment:false, consentData:false, consentMarketing:false, photoUrl:"",
+  idType:"National ID", idNumber:"", idExpiry:"",
 };
 
 // ==============================================================================
@@ -63,6 +64,11 @@ const WARDS = [
 const GENDERS = ["Male", "Female", "Other", "Prefer not to say"];
 
 const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "Unknown"];
+
+const ID_TYPES = [
+  "National ID", "Passport", "Driver's License", "Voter's Card", "NHIS Card",
+  "Residence Permit", "Refugee ID", "Birth Certificate", "School ID", "Other"
+];
 
 const RELIGIONS = [
   "Christianity", "Islam", "Hinduism", "Buddhism", "Judaism",
@@ -161,5 +167,5 @@ const RELATIONSHIPS = [
 // INVENTORY MODULE SEED DATA
 // ==============================================================================
 
-export { EMPTY_REG, SPECIALTIES, WARDS, GENDERS, BLOOD_GROUPS, RELIGIONS, DIET_OPTIONS, MARITAL, LANGUAGES, CORP_ORGS, INS_PROVIDERS, DISCHARGE_TYPES, CONDITION_AT_DC, SPECIMEN_MAP, NATIONALITIES, RELATIONSHIPS };
+export { EMPTY_REG, SPECIALTIES, WARDS, GENDERS, BLOOD_GROUPS, ID_TYPES, RELIGIONS, DIET_OPTIONS, MARITAL, LANGUAGES, CORP_ORGS, INS_PROVIDERS, DISCHARGE_TYPES, CONDITION_AT_DC, SPECIMEN_MAP, NATIONALITIES, RELATIONSHIPS };
 export { TRIAGE_LEVELS } from "./referenceData.js";
