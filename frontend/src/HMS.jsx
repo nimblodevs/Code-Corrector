@@ -520,6 +520,7 @@ export default function HMS() {
 
   const saveRegistration = () => {
     if (!regForm.firstName?.trim()||!regForm.lastName?.trim()||!regForm.dateOfBirth||!regForm.phone?.trim()) { setRegErr("Required: First Name, Last Name, Date of Birth, Phone."); return; }
+    if (!regForm.idNumber?.trim()) { setRegErr("Government ID Number is required for compliance."); return; }
     if (regForm.category==="Insurance"&&!regForm.insuranceMemberNo?.trim()) { setRegErr("Insurance Member No. is required."); return; }
     if (!regForm.consentTreatment||!regForm.consentData) { setRegErr("Both consent checkboxes are required."); return; }
     const seq = patients.findIndex(p=>p.queueNo===active.queueNo) + 1;
@@ -955,7 +956,7 @@ export default function HMS() {
     return match && (fStatus==="All" || p.status===fStatus);
   });
 
-  const REG_TABS = ["👤 Patient Details","🌍 Demographics","👪 NOK & Emergency","Category","Consent"];
+  const REG_TABS = ["👤 Personal & ID","🌍 Demographics","👪 NOK & Emergency","💳 Category","📋 Consent"];
 
   // --- Button styles ---------------------------------------------------------
   const BtnPrimary = { padding:"10px 22px",border:"none",borderRadius:9,background:"#0b1929",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit" };

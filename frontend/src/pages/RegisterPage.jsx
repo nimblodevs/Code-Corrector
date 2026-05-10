@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { C, baseInput, IS, SS, TA, Badge, Sec, FL, Card, ErrBox, SuccessBox, FlowBar, Sidebar, TopBar, Layout, PatientBanner, RefNumStrip, EmptyState, CatalogueSearch } from "../components/SharedComponents";
 import { STATUS_META, ICON_EMOJI, emojiOf, genNo, CASH_METHODS, SCHEME_METHODS, checkPharmCleared, todayStr, timeNow, pad, calcAge, fmtN, avatarHue } from "../lib/utils";
-import { EMPTY_REG, SPECIALTIES, WARDS, GENDERS, BLOOD_GROUPS, RELIGIONS, DIET_OPTIONS, MARITAL, LANGUAGES, CORP_ORGS, INS_PROVIDERS, DISCHARGE_TYPES, CONDITION_AT_DC, SPECIMEN_MAP, NATIONALITIES, RELATIONSHIPS, TRIAGE_LEVELS } from "../data/constants";
+import { EMPTY_REG, SPECIALTIES, WARDS, GENDERS, BLOOD_GROUPS, RELIGIONS, DIET_OPTIONS, MARITAL, LANGUAGES, CORP_ORGS, INS_PROVIDERS, DISCHARGE_TYPES, CONDITION_AT_DC, SPECIMEN_MAP, NATIONALITIES, RELATIONSHIPS, TRIAGE_LEVELS, ID_TYPES } from "../data/constants";
 import { ICD10, LAB_CATEGORIES, RAD_CATEGORIES, DRUG_ITEMS, SERVICES, IP_CHARGES, ITEM_REGISTRY, searchRegistry, getDrugPrice } from "../data/referenceData";
 import { SEED_INVENTORY, SEED_DISPENSE_LOG, SEED_INV_TXNS, SEED_SUPPLIERS, SEED_POS, SEED_RECALLS, SEED_PATIENTS } from "../data/seedData";
 import DebtorsAccount from "../components/DebtorsAccount";
@@ -185,23 +185,30 @@ export default function RegisterPage(props) {
                   <div>
                     <Sec accent="#0369a1">Personal Information</Sec>
                     <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:16 }}>
-                      <FL label="First Name *"    ch={<input value={regForm.firstName||""}  onChange={rf("firstName")}  style={IS(!regForm.firstName)} />} />
-                      <FL label="Middle Name"     ch={<input value={regForm.middleName||""} onChange={rf("middleName")} style={IS()} />} />
-                      <FL label="Last Name *"     ch={<input value={regForm.lastName||""}   onChange={rf("lastName")}   style={IS(!regForm.lastName)} />} />
-                      <FL label="Date of Birth *" ch={<input type="date" value={regForm.dateOfBirth||""} onChange={rf("dateOfBirth")} style={IS(!regForm.dateOfBirth)} />} />
+                      <FL label="First Name *"    ch={<input value={regForm.firstName||""}  onChange={rf("firstName")}  style={IS(!regForm.firstName)} placeholder="Given name" />} />
+                      <FL label="Middle Name"     ch={<input value={regForm.middleName||""} onChange={rf("middleName")} style={IS()} placeholder="Optional" />} />
+                      <FL label="Last Name *"     ch={<input value={regForm.lastName||""}   onChange={rf("lastName")}   style={IS(!regForm.lastName)} placeholder="Family name" />} />
+                      <FL label="Date of Birth *" ch={<input type="date" value={regForm.dateOfBirth||""} onChange={rf("dateOfBirth")} style={IS(!regForm.dateOfBirth)} max={todayStr()} />} />
                       <FL label="Gender"          ch={<select value={regForm.gender||"Male"} onChange={rf("gender")} style={SS}>{GENDERS.map(g=><option key={g}>{g}</option>)}</select>} />
                       <FL label="Blood Group"     ch={<select value={regForm.bloodGroup||"Unknown"} onChange={rf("bloodGroup")} style={SS}>{BLOOD_GROUPS.map(b=><option key={b}>{b}</option>)}</select>} />
                     </div>
+                    <Sec accent="#0369a1">Identification</Sec>
+                    <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:16 }}>
+                      <FL label="ID Type"         ch={<select value={regForm.idType||"National ID"} onChange={rf("idType")} style={SS}>{ID_TYPES.map(t=><option key={t}>{t}</option>)}</select>} />
+                      <FL label="ID Number *"     ch={<input value={regForm.idNumber||""} onChange={rf("idNumber")} style={IS(!regForm.idNumber)} placeholder="Government issued ID" />} />
+                      <FL label="ID Expiry"       ch={<input type="date" value={regForm.idExpiry||""} onChange={rf("idExpiry")} style={IS()} min={todayStr()} />} />
+                    </div>
                     <Sec accent="#0369a1">Contact Information</Sec>
                     <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:16 }}>
-                      <FL label="Phone *"    ch={<input value={regForm.phone||""}    onChange={rf("phone")}    style={IS(!regForm.phone)} />} />
-                      <FL label="Alt. Phone" ch={<input value={regForm.altPhone||""} onChange={rf("altPhone")} style={IS()} />} />
-                      <FL label="Email"      ch={<input type="email" value={regForm.email||""} onChange={rf("email")} style={IS()} />} />
+                      <FL label="Phone *"         ch={<input value={regForm.phone||""} onChange={rf("phone")} style={IS(!regForm.phone)} placeholder="+234 XXX XXX XXXX" type="tel" />} />
+                      <FL label="Alt. Phone"      ch={<input value={regForm.altPhone||""} onChange={rf("altPhone")} style={IS()} type="tel" />} />
+                      <FL label="Email"           ch={<input type="email" value={regForm.email||""} onChange={rf("email")} style={IS()} placeholder="patient@example.com" />} />
                     </div>
-                    <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12 }}>
-                      <FL label="Address" span={2} ch={<input value={regForm.address||""} onChange={rf("address")} placeholder="Street address" style={IS()} />} />
-                      <FL label="City / Town" ch={<input value={regForm.city||""}  onChange={rf("city")}  style={IS()} />} />
-                      <FL label="State"       ch={<input value={regForm.state||""} onChange={rf("state")} style={IS()} />} />
+                    <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:12 }}>
+                      <FL label="Address" span={2} ch={<input value={regForm.address||""} onChange={rf("address")} placeholder="Street address / P.O. Box" style={IS()} />} />
+                      <FL label="Postal Code"      ch={<input value={regForm.postalCode||""} onChange={rf("postalCode")} placeholder="ZIP / Postal code" style={IS()} />} />
+                      <FL label="City / Town"      ch={<input value={regForm.city||""} onChange={rf("city")} style={IS()} />} />
+                      <FL label="State / Region"   ch={<input value={regForm.state||""} onChange={rf("state")} style={IS()} />} />
                     </div>
                     <FL label="Country" ch={<input value={regForm.country||"Nigeria"} onChange={rf("country")} style={{ ...IS(),maxWidth:220 }} />} />
                   </div>
@@ -224,12 +231,13 @@ export default function RegisterPage(props) {
                     <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16 }}>
                       <FL label="NOK Full Name *" ch={<input value={regForm.nokName||""}  onChange={rf("nokName")}  style={IS(!regForm.nokName)} />} />
                       <FL label="Relationship"    ch={<select value={regForm.nokRelationship||"Spouse"} onChange={rf("nokRelationship")} style={SS}>{RELATIONSHIPS.map(r=><option key={r}>{r}</option>)}</select>} />
-                      <FL label="NOK Phone *"     ch={<input value={regForm.nokPhone||""} onChange={rf("nokPhone")} style={IS(!regForm.nokPhone)} />} />
-                      <FL label="NOK Address"     ch={<input value={regForm.nokAddress||""} onChange={rf("nokAddress")} style={IS()} />} />
+                      <FL label="NOK Phone *"     ch={<input value={regForm.nokPhone||""} onChange={rf("nokPhone")} style={IS(!regForm.nokPhone)} type="tel" />} />
+                      <FL label="NOK Email"       ch={<input type="email" value={regForm.nokEmail||""} onChange={rf("nokEmail")} style={IS()} placeholder="nok@example.com" />} />
+                      <FL label="NOK Address" span={2} ch={<input value={regForm.nokAddress||""} onChange={rf("nokAddress")} style={IS()} />} />
                     </div>
                     <label style={{ display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#f0f9ff",borderRadius:9,border:"1px solid #bae6fd",marginBottom:16,cursor:"pointer" }}>
                       <input type="checkbox" checked={regForm.ecSameAsNok}
-                        onChange={e=>setRegForm(p=>({...p,ecSameAsNok:e.target.checked,ecName:e.target.checked?p.nokName:p.ecName,ecRelationship:e.target.checked?p.nokRelationship:p.ecRelationship,ecPhone:e.target.checked?p.nokPhone:p.ecPhone}))}
+                        onChange={e=>setRegForm(p=>({...p,ecSameAsNok:e.target.checked,ecName:e.target.checked?p.nokName:p.ecName,ecRelationship:e.target.checked?p.nokRelationship:p.ecRelationship,ecPhone:e.target.checked?p.nokPhone:p.ecPhone,ecEmail:e.target.checked?p.nokEmail:p.ecEmail}))}
                         style={{ width:16,height:16 }} />
                       <span style={{ fontSize:13,color:"#0369a1",fontWeight:600 }}>Emergency contact is same as Next of Kin</span>
                     </label>
@@ -239,7 +247,8 @@ export default function RegisterPage(props) {
                         <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
                           <FL label="EC Full Name *" ch={<input value={regForm.ecName||""}  onChange={rf("ecName")}  style={IS(!regForm.ecName)} />} />
                           <FL label="Relationship"   ch={<select value={regForm.ecRelationship||"Spouse"} onChange={rf("ecRelationship")} style={SS}>{RELATIONSHIPS.map(r=><option key={r}>{r}</option>)}</select>} />
-                          <FL label="EC Phone *"     ch={<input value={regForm.ecPhone||""} onChange={rf("ecPhone")} style={IS(!regForm.ecPhone)} />} />
+                          <FL label="EC Phone *"     ch={<input value={regForm.ecPhone||""} onChange={rf("ecPhone")} style={IS(!regForm.ecPhone)} type="tel" />} />
+                          <FL label="EC Email"       ch={<input type="email" value={regForm.ecEmail||""} onChange={rf("ecEmail")} style={IS()} placeholder="ec@example.com" />} />
                         </div>
                       </>
                     )}
@@ -284,22 +293,28 @@ export default function RegisterPage(props) {
                 )}
                 {regTab===4 && (
                   <div>
-                    <Sec accent="#854d0e">Consent & Compliance (HIPAA . GDPR . NDPR)</Sec>
+                    <Sec accent="#854d0e">Consent & Compliance (HIPAA · GDPR · NDPR)</Sec>
                     <div style={{ background:"#fef9c3",borderRadius:10,padding:"18px",border:"1px solid #fde047",marginBottom:14 }}>
                       <p style={{ fontSize:13,color:"#78350f",marginBottom:14,lineHeight:1.7 }}>
                         The patient or legal guardian must provide informed consent before registration can be completed.
+                        By consenting, you acknowledge that your health information will be collected, stored, and processed
+                        in accordance with applicable data protection regulations.
                       </p>
                       <label style={{ display:"flex",alignItems:"flex-start",gap:12,marginBottom:12,cursor:"pointer" }}>
                         <input type="checkbox" checked={regForm.consentTreatment} onChange={rf("consentTreatment")} style={{ width:16,height:16,marginTop:2,flexShrink:0 }} />
                         <span style={{ fontSize:13,lineHeight:1.6 }}><strong>Consent to Treatment:</strong> Patient consents to examination, diagnostic procedures, and treatment.</span>
                       </label>
-                      <label style={{ display:"flex",alignItems:"flex-start",gap:12,cursor:"pointer" }}>
+                      <label style={{ display:"flex",alignItems:"flex-start",gap:12,marginBottom:12,cursor:"pointer" }}>
                         <input type="checkbox" checked={regForm.consentData} onChange={rf("consentData")} style={{ width:16,height:16,marginTop:2,flexShrink:0 }} />
-                        <span style={{ fontSize:13,lineHeight:1.6 }}><strong>Data Privacy:</strong> Patient has been informed of their rights under HIPAA / GDPR / NDPR.</span>
+                        <span style={{ fontSize:13,lineHeight:1.6 }}><strong>Data Privacy:</strong> Patient has been informed of their rights under HIPAA / GDPR / NDPR and consents to data processing for healthcare purposes.</span>
+                      </label>
+                      <label style={{ display:"flex",alignItems:"flex-start",gap:12,cursor:"pointer" }}>
+                        <input type="checkbox" checked={regForm.consentMarketing} onChange={rf("consentMarketing")} style={{ width:16,height:16,marginTop:2,flexShrink:0 }} />
+                        <span style={{ fontSize:13,lineHeight:1.6 }}><strong>Marketing Communications:</strong> Patient agrees to receive health tips, wellness programs, and service updates via email or SMS. (Optional)</span>
                       </label>
                     </div>
                     {regForm.consentTreatment && regForm.consentData && (
-                      <SuccessBox msg="Consent recorded. Ready to complete registration." />
+                      <SuccessBox msg="✓ Consent recorded. Ready to complete registration." />
                     )}
                   </div>
                 )}
