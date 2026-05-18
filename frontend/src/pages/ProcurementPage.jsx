@@ -66,6 +66,11 @@ export default function ProcurementPage(props) {
     servicePrefix, serviceLabel,
   } = props;
 
+  // ── GRN form local state ─────────────────────────────────────────────────
+  const [grnMeta, setGrnMeta] = useState({
+    receivedBy:"", deliveryNoteNo:"", receiptDate:new Date().toISOString().split("T")[0],
+    vehicleNo:"", remarks:""
+  });
 
     const fmtMoney = (n) => "KSh "+Number(n||0).toLocaleString("en-KE",{minimumFractionDigits:2,maximumFractionDigits:2});
     const fmtDate  = (d) => d?new Date(d).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}):"—";
@@ -101,37 +106,57 @@ export default function ProcurementPage(props) {
     });
 
     // GRN — receive goods
+    // procGRN[poId][idx] = { qty, batchNo, expiryDate, condition }
+    const getGrnEntry = (poId, idx) => {
+      const raw = procGRN[poId]?.[idx];
+      if (!raw || typeof raw === "string" || typeof raw === "number") return { qty: Number(raw||0), batchNo:"", expiryDate:"", condition:"Good" };
+      return raw;
+    };
+    const setGrnEntry = (poId, idx, field, value) =>
+      setProcGRN(prev => ({
+        ...prev,
+        [poId]: { ...(prev[poId]||{}), [idx]: { ...getGrnEntry(poId, idx), [field]: value } }
+      }));
+
     const submitGRN = () => {
       if (!procGRNPO) { setProcErr("Select a PO to receive against."); return; }
       const grn = procGRN[procGRNPO.id] || {};
-      const entries = Object.entries(grn).filter(([,q])=>Number(q)>0);
+      const entries = Object.entries(grn).filter(([,v])=>Number(typeof v==="object"?v?.qty:v)>0);
       if (!entries.length) { setProcErr("Enter at least one received quantity."); return; }
 
-      const today = new Date().toISOString().split("T")[0];
+      const today = grnMeta.receiptDate || new Date().toISOString().split("T")[0];
       let newTxns = [...invTxns];
       let newItems = [...invItems];
 
-      entries.forEach(([idxStr, rawQty]) => {
+      entries.forEach(([idxStr, rawEntry]) => {
         const idx = Number(idxStr);
         const lineItem = procGRNPO.items[idx];
         if (!lineItem) return;
-        const qty = Math.min(Number(rawQty), (lineItem.qty||0)-(lineItem.received||0));
+        const entry = getGrnEntry(procGRNPO.id, idx);
+        const qty = Math.min(Number(entry.qty||0), (lineItem.qty||0)-(lineItem.received||0));
         if (qty<=0) return;
+        const batchNo    = entry.batchNo   || lineItem.batchNo   || "BATCH-GRN";
+        const expiryDate = entry.expiryDate|| lineItem.expiryDate|| "";
+        const condition  = entry.condition || "Good";
 
         // Create stock-in transaction
         const txnId = "TXN"+String(newTxns.length+1).padStart(3,"0");
-        newTxns.push({ id:txnId, type:"in", itemId:lineItem.itemId, qty, batchNo:lineItem.batchNo||"BATCH-GRN", date:today,
-          reference:procGRNPO.id, department:"Pharmacy", notes:`GRN from ${procGRNPO.supplierName}`,
-          unitCost:lineItem.unitCost||0, performedBy:"Store Manager" });
+        newTxns.push({
+          id:txnId, type:"in", itemId:lineItem.itemId, qty, batchNo, date:today,
+          reference:procGRNPO.id,
+          department:procGRNPO.department||"Pharmacy",
+          notes:`GRN from ${procGRNPO.supplierName}${grnMeta.deliveryNoteNo?" · DN:"+grnMeta.deliveryNoteNo:""}${condition!=="Good"?" · Condition:"+condition:""}`,
+          unitCost:lineItem.unitCost||0,
+          performedBy:grnMeta.receivedBy||"Store Manager"
+        });
 
-        // Update inventory batch
+        // Update inventory batch (use GRN batch no and expiry)
         newItems = newItems.map(it => {
           if (it.id !== lineItem.itemId) return it;
-          const batchNo = lineItem.batchNo||"BATCH-GRN";
-          const existing = it.batches.find(b=>b.batchNo===batchNo);
+          const existing = it.batches?.find(b=>b.batchNo===batchNo);
           const newBatches = existing
-            ? it.batches.map(b=>b.batchNo===batchNo?{...b,qty:b.qty+qty}:b)
-            : [...it.batches,{batchNo,qty,receivedAt:today,expiryDate:lineItem.expiryDate||"",unitCost:lineItem.unitCost||0,recalled:false}];
+            ? (it.batches||[]).map(b=>b.batchNo===batchNo?{...b,qty:b.qty+qty}:b)
+            : [...(it.batches||[]),{batchNo,qty,receivedAt:today,expiryDate,unitCost:lineItem.unitCost||0,recalled:false}];
           return {...it, batches:newBatches};
         });
       });
@@ -143,19 +168,29 @@ export default function ProcurementPage(props) {
       setProcPOs(prev=>prev.map(po=>{
         if (po.id!==procGRNPO.id) return po;
         const updatedItems = po.items.map((it,idx)=>{
-          const added = Number(procGRN[po.id]?.[idx]||0);
+          const entry = getGrnEntry(po.id, idx);
+          const added = Number(entry.qty||0);
           return {...it, received:(it.received||0)+Math.min(added,(it.qty||0)-(it.received||0))};
         });
-        const allReceived = updatedItems.every(it=>it.received>=it.qty);
-        const anyReceived = updatedItems.some(it=>it.received>0);
+        const allReceived = updatedItems.every(it=>Number(it.received)>=Number(it.qty));
+        const anyReceived = updatedItems.some(it=>Number(it.received)>0);
         const newStatus   = allReceived?"received":anyReceived?"partially_received":po.status;
         return {...po, items:updatedItems, status:newStatus};
       }));
 
-      apiCall(`/hms/purchase-orders/${procGRNPO.id}/receive`, "POST", { items: procGRNPO.items.map((it,idx) => ({ itemId:it.itemId, qty:Number(procGRN[procGRNPO.id]?.[idx]||0), batchNo:it.batchNo||"", expiryDate:it.expiryDate||"", unitCost:it.unitCost||0 })) }).catch(console.error);
+      // Persist to API
+      apiCall(`/hms/purchase-orders/${procGRNPO.id}/receive`, "POST", {
+        items: procGRNPO.items.map((_,idx) => {
+          const entry = getGrnEntry(procGRNPO.id, idx);
+          const lineItem = procGRNPO.items[idx];
+          return { itemId:lineItem.itemId, qty:Number(entry.qty||0), batchNo:entry.batchNo||lineItem.batchNo||"", expiryDate:entry.expiryDate||lineItem.expiryDate||"", unitCost:lineItem.unitCost||0 };
+        })
+      }).catch(console.error);
+
       setProcGRN(prev=>({...prev,[procGRNPO.id]:{}}));
       setProcGRNPO(null);
       setProcErr("");
+      showToast("GRN posted — stock updated successfully.", "success");
     };
 
     // Create new supplier
@@ -252,6 +287,174 @@ export default function ProcurementPage(props) {
         </div>
       </div>
     );
+
+    // ── GRN print document builder ───────────────────────────────────────────
+    const buildGRNDoc = (po, meta, grnData) => {
+      const cur = po.currency||"KES";
+      const fmt = (n) => `${cur} ${Number(n||0).toLocaleString("en-KE",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+      const grnId = "GRN-"+po.id+"-"+Date.now().toString(36).toUpperCase();
+      const lines = (po.items||[]).map((it,idx)=>{
+        const entry = grnData?.[idx]||{};
+        const ordered = Number(it.qty)||0;
+        const alreadyRcvd = Number(it.received)||0;
+        const nowRcvd = Math.min(Number(entry.qty||0), ordered-alreadyRcvd);
+        return {...it, nowRcvd, batchInput:entry.batchNo||it.batchNo||"", expiryInput:entry.expiryDate||it.expiryDate||"", condition:entry.condition||"Good", alreadyRcvd};
+      }).filter(it=>it.nowRcvd>0);
+      const totalQty = lines.reduce((s,l)=>s+l.nowRcvd,0);
+      const totalValue = lines.reduce((s,l)=>s+l.nowRcvd*(Number(l.unitCost)||0),0);
+      return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>GRN – ${grnId}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1e293b;background:#fff}
+  @media screen{body{padding:32px;max-width:900px;margin:auto}}
+  @media print{body{padding:18mm 16mm}}
+  .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #059669;padding-bottom:14px;margin-bottom:20px}
+  .hdr-left h1{font-size:22px;font-weight:900;color:#059669;letter-spacing:-0.5px}
+  .hdr-left p{font-size:11px;color:#64748b;margin-top:3px}
+  .hdr-right{text-align:right}
+  .grn-num{font-size:16px;font-weight:800;color:#0b1929;font-family:monospace}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:18px}
+  .grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:18px}
+  .sec-title{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #f1f5f9}
+  .sec-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px}
+  .row{display:flex;justify-content:space-between;margin-bottom:4px}
+  .lbl{font-weight:700;color:#64748b;font-size:11px}
+  .val{color:#0b1929;font-size:11px;text-align:right}
+  table{width:100%;border-collapse:collapse;margin-bottom:4px;font-size:11px}
+  thead tr{background:#059669;color:#fff}
+  thead th{padding:8px 10px;text-align:left;font-weight:700;font-size:10px;letter-spacing:.3px}
+  tbody tr:nth-child(even){background:#f8fafc}
+  tbody td{padding:8px 10px;border-bottom:1px solid #e2e8f0;vertical-align:middle}
+  tbody td.num{text-align:right;font-family:monospace}
+  .cond-good{background:#dcfce7;color:#15803d;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700}
+  .cond-damaged{background:#fee2e2;color:#dc2626;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700}
+  .cond-short{background:#fef3c7;color:#d97706;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700}
+  .totals{width:280px;margin-left:auto;margin-top:8px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
+  .totals .tr{display:flex;justify-content:space-between;padding:7px 14px;font-size:12px;border-bottom:1px solid #f1f5f9}
+  .totals .tr:last-child{background:#059669;color:#fff;font-weight:800;font-size:13px;border-bottom:none}
+  .sig-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px;margin-top:30px}
+  .sig-box{border-top:1.5px solid #059669;padding-top:8px}
+  .sig-name{font-weight:700;font-size:12px;color:#0b1929;margin-bottom:2px}
+  .sig-role{font-size:10px;color:#94a3b8}
+  .sig-date{font-size:10px;color:#64748b;margin-top:16px}
+  .print-bar{display:flex;gap:10px;justify-content:flex-end;margin-bottom:20px}
+  .print-bar button{padding:8px 18px;border:none;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700}
+  .btn-print{background:#059669;color:#fff}
+  .btn-close{background:#f1f5f9;color:#0b1929}
+  @media print{.print-bar{display:none}}
+  .watermark{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);font-size:72px;font-weight:900;color:rgba(5,150,105,.04);pointer-events:none;white-space:nowrap;z-index:0}
+  .content{position:relative;z-index:1}
+  .remarks-box{border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-top:14px;font-size:11px;color:#475569;font-style:italic}
+</style></head>
+<body>
+<div class="watermark">GOODS RECEIPT NOTE</div>
+<div class="content">
+<div class="print-bar">
+  <button class="btn-print" onclick="window.print()">🖨 Print</button>
+  <button class="btn-close" onclick="window.close()">✕ Close</button>
+</div>
+<div class="hdr">
+  <div class="hdr-left">
+    <h1>GOODS RECEIPT NOTE</h1>
+    <p>MediCore Hospital Management System · Nairobi, Kenya</p>
+  </div>
+  <div class="hdr-right">
+    <div class="grn-num">${grnId}</div>
+    <div style="font-size:11px;color:#64748b;margin-top:4px">Receipt Date: ${meta.receiptDate||new Date().toLocaleDateString("en-GB")}</div>
+    <div style="margin-top:4px;display:inline-block;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:800;background:#dcfce7;color:#15803d">RECEIVED</div>
+  </div>
+</div>
+<div class="grid-3" style="margin-bottom:20px">
+  <div>
+    <div class="sec-title">Against Purchase Order</div>
+    <div class="sec-box">
+      <div class="row"><span class="lbl">PO Number</span><span class="val" style="font-family:monospace;font-weight:800">${po.id}</span></div>
+      <div class="row"><span class="lbl">Supplier</span><span class="val">${po.supplierName||"—"}</span></div>
+      <div class="row"><span class="lbl">PO Date</span><span class="val">${po.date||"—"}</span></div>
+      <div class="row"><span class="lbl">Expected Date</span><span class="val">${po.expectedDate||"—"}</span></div>
+    </div>
+  </div>
+  <div>
+    <div class="sec-title">Delivery Information</div>
+    <div class="sec-box">
+      <div class="row"><span class="lbl">Delivery Note #</span><span class="val" style="font-family:monospace;font-weight:700">${meta.deliveryNoteNo||"—"}</span></div>
+      <div class="row"><span class="lbl">Vehicle / Driver</span><span class="val">${meta.vehicleNo||"—"}</span></div>
+      <div class="row"><span class="lbl">Receipt Date</span><span class="val">${meta.receiptDate||"—"}</span></div>
+    </div>
+  </div>
+  <div>
+    <div class="sec-title">Received By</div>
+    <div class="sec-box">
+      <div style="font-weight:800;font-size:13px;color:#0b1929;margin-bottom:4px">${meta.receivedBy||"____________________"}</div>
+      <div style="color:#475569;font-size:11px">Store / Receiving Officer</div>
+      <div style="color:#475569;font-size:11px;margin-top:6px">Dept: ${po.department||"Pharmacy / Store"}</div>
+    </div>
+  </div>
+</div>
+<div style="margin-bottom:8px">
+  <div class="sec-title">Items Received (${totalQty} units across ${lines.length} line${lines.length!==1?"s":""})</div>
+  <table>
+    <thead><tr>
+      <th style="width:30px">#</th>
+      <th>Item Description</th>
+      <th style="width:65px;text-align:right">Ordered</th>
+      <th style="width:70px;text-align:right">Prev Rcvd</th>
+      <th style="width:75px;text-align:right">Now Rcvd</th>
+      <th style="width:60px;text-align:center">Unit</th>
+      <th style="width:110px">Batch No.</th>
+      <th style="width:90px">Expiry</th>
+      <th style="width:80px">Condition</th>
+      <th style="width:110px;text-align:right">Value</th>
+    </tr></thead>
+    <tbody>
+      ${lines.map((it,i)=>`
+      <tr>
+        <td style="color:#94a3b8">${i+1}</td>
+        <td style="font-weight:600">${it.itemName||it.itemId}</td>
+        <td class="num">${it.qty||0}</td>
+        <td class="num" style="color:#64748b">${it.alreadyRcvd}</td>
+        <td class="num" style="font-weight:700;color:#059669">${it.nowRcvd}</td>
+        <td style="text-align:center;color:#64748b">${it.unit||"—"}</td>
+        <td style="font-family:monospace;font-size:11px">${it.batchInput||"—"}</td>
+        <td style="font-family:monospace;font-size:11px">${it.expiryInput||"—"}</td>
+        <td><span class="cond-${(it.condition||"Good").toLowerCase().replace(" ","-")}">${it.condition||"Good"}</span></td>
+        <td class="num" style="font-weight:700">${fmt(it.nowRcvd*(Number(it.unitCost)||0))}</td>
+      </tr>`).join("")}
+    </tbody>
+  </table>
+</div>
+<div class="totals">
+  <div class="tr"><span>Total Units Received</span><span>${totalQty}</span></div>
+  <div class="tr"><span>Total Value (${cur})</span><span>${fmt(totalValue)}</span></div>
+</div>
+${meta.remarks?`<div class="remarks-box"><strong>Remarks:</strong> ${meta.remarks}</div>`:""}
+<div style="margin-top:32px">
+  <div class="sec-title">Authorization</div>
+  <div class="sig-grid">
+    <div class="sig-box">
+      <div class="sig-name">${meta.receivedBy||"____________________"}</div>
+      <div class="sig-role">Received By (Store Officer)</div>
+      <div class="sig-date">Date: ${meta.receiptDate||"____________________"}</div>
+    </div>
+    <div class="sig-box">
+      <div class="sig-name">____________________</div>
+      <div class="sig-role">Verified By (Supervisor)</div>
+      <div class="sig-date">Date: ____________________</div>
+    </div>
+    <div class="sig-box">
+      <div class="sig-name">____________________</div>
+      <div class="sig-role">Supplier Representative</div>
+      <div class="sig-date">Date: ____________________</div>
+    </div>
+  </div>
+</div>
+<div style="margin-top:36px;padding-top:14px;border-top:1px solid #e2e8f0;font-size:10px;color:#94a3b8;display:flex;justify-content:space-between">
+  <span>Generated by MediCore HMS · ${new Date().toLocaleString("en-GB")}</span>
+  <span>GRN Ref: ${grnId} · PO Ref: ${po.id}</span>
+</div>
+</div></body></html>`;
+    };
 
     // ── PO print document builder (shared by both print buttons) ────────────
     const buildPODoc = (po) => {
@@ -830,75 +1033,190 @@ ${po.notes?`<div style="margin-top:16px"><div class="sec-title">Notes</div><div 
 
           {/* ── RECEIVE GOODS (GRN) ─────────────────────────────────────────── */}
           {procTab===3 && (
-            <div style={{maxWidth:860,margin:"0 auto"}}>
-              <Card style={{marginBottom:20}}>
-                <div style={{fontSize:14,fontWeight:800,color:"#0b1929",marginBottom:14}}>Select Purchase Order to Receive Against</div>
+            <div style={{maxWidth:980,margin:"0 auto"}}>
+
+              {/* PO Selector */}
+              <Card style={{marginBottom:18}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+                  <div style={{fontSize:14,fontWeight:800,color:"#0b1929"}}>Select Purchase Order to Receive Against</div>
+                  <div style={{fontSize:11,color:"#94a3b8"}}>Approved, Sent & Partially-received POs shown</div>
+                </div>
                 <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                  {procPOs.filter(p=>["sent","partially_received"].includes(p.status)).length===0
-                    ? <div style={{padding:"24px 0",color:"#94a3b8",fontSize:13}}>No POs ready for receipt. A PO must be <strong>marked as Sent</strong> by the supplier before goods can be received.</div>
-                    : procPOs.filter(p=>["sent","partially_received"].includes(p.status)).map(po=>(
-                        <button key={po.id} onClick={()=>{setProcGRNPO(po);setProcGRN(prev=>({...prev,[po.id]:{}}));setProcErr("");}}
-                          style={{display:"flex",flexDirection:"column",padding:"12px 16px",border:"2px solid",borderRadius:11,cursor:"pointer",fontFamily:"inherit",textAlign:"left",minWidth:200,
-                            borderColor:procGRNPO?.id===po.id?"#0b1929":"#e2e8f0",
-                            background:procGRNPO?.id===po.id?"#0b1929":"#fff",
-                            color:procGRNPO?.id===po.id?"#fff":"#0b1929"}}>
-                          <div style={{fontSize:12,fontWeight:800,fontFamily:"monospace"}}>{po.id}</div>
-                          <div style={{fontSize:11,marginTop:3,opacity:.75}}>{po.supplierName}</div>
-                          <div style={{marginTop:5}}><StatusBadge status={po.status}/></div>
-                        </button>
-                      ))
+                  {procPOs.filter(p=>["approved","sent","partially_received"].includes(p.status)).length===0
+                    ? <div style={{padding:"24px 0",color:"#94a3b8",fontSize:13}}>No POs ready for receipt. Approve a PO first, then receive goods against it.</div>
+                    : procPOs.filter(p=>["approved","sent","partially_received"].includes(p.status)).map(po=>{
+                        const pct = poReceivedPct(po);
+                        const sel = procGRNPO?.id===po.id;
+                        return (
+                          <button key={po.id}
+                            onClick={()=>{setProcGRNPO(po);setProcGRN(prev=>({...prev,[po.id]:{}}));setProcErr("");}}
+                            style={{display:"flex",flexDirection:"column",padding:"12px 16px",border:"2px solid",borderRadius:12,cursor:"pointer",fontFamily:"inherit",textAlign:"left",minWidth:210,
+                              borderColor:sel?"#059669":"#e2e8f0",background:sel?"#059669":"#fff",color:sel?"#fff":"#0b1929"}}>
+                            <div style={{fontSize:12,fontWeight:800,fontFamily:"monospace"}}>{po.id}</div>
+                            <div style={{fontSize:11,marginTop:2,opacity:.8}}>{po.supplierName}</div>
+                            <div style={{marginTop:6,display:"flex",alignItems:"center",gap:6}}>
+                              <StatusBadge status={po.status}/>
+                            </div>
+                            {pct>0 && (
+                              <div style={{marginTop:8}}>
+                                <div style={{height:4,borderRadius:2,background:sel?"rgba(255,255,255,.3)":"#f1f5f9",overflow:"hidden"}}>
+                                  <div style={{height:"100%",width:pct+"%",borderRadius:2,background:sel?"#fff":"#059669"}}/>
+                                </div>
+                                <div style={{fontSize:10,marginTop:3,opacity:.75}}>{pct}% received</div>
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })
                   }
                 </div>
               </Card>
 
               {procGRNPO && (
-                <Card>
-                  <div style={{fontSize:14,fontWeight:800,color:"#0b1929",marginBottom:4}}>Goods Receipt — {procGRNPO.id}</div>
-                  <div style={{fontSize:12,color:"#64748b",marginBottom:16}}>Supplier: {procGRNPO.supplierName} · Expected: {fmtDate(procGRNPO.expectedDate)}</div>
+                <>
+                  {/* GRN Header Metadata */}
+                  <Card style={{marginBottom:18}}>
+                    <div style={{fontSize:13,fontWeight:800,color:"#0b1929",marginBottom:14}}>
+                      📋 Goods Receipt — {procGRNPO.id}
+                      <span style={{marginLeft:10,fontSize:11,fontWeight:500,color:"#64748b"}}>
+                        Supplier: <strong>{procGRNPO.supplierName}</strong> · Expected: {fmtDate(procGRNPO.expectedDate)}
+                      </span>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 2fr",gap:14}}>
+                      {[
+                        {label:"Received By *",     field:"receivedBy",      type:"text",  ph:"Store Officer name"},
+                        {label:"Delivery Note #",   field:"deliveryNoteNo",  type:"text",  ph:"DN-12345"},
+                        {label:"Receipt Date *",    field:"receiptDate",     type:"date",  ph:""},
+                        {label:"Vehicle / Driver",  field:"vehicleNo",       type:"text",  ph:"KBZ 123A"},
+                        {label:"Remarks / Notes",   field:"remarks",         type:"text",  ph:"Any notes about this delivery"},
+                      ].map(({label,field,type,ph})=>(
+                        <div key={field}>
+                          <div style={{fontSize:10,fontWeight:700,color:"#64748b",marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>{label}</div>
+                          <input type={type} placeholder={ph}
+                            value={grnMeta[field]||""}
+                            onChange={e=>setGrnMeta(m=>({...m,[field]:e.target.value}))}
+                            style={{width:"100%",padding:"8px 11px",border:"1.5px solid #e2e8f0",borderRadius:8,fontSize:12,fontFamily:"inherit",outline:"none",color:"#0b1929"}}/>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
 
-                  <table style={{width:"100%",borderCollapse:"collapse",marginBottom:16}}>
-                    <thead>
-                      <tr style={{background:"#f8fafc"}}>
-                        {["Item","Unit","Ordered","Already Received","Outstanding","Batch No.","Expiry","Receive Now"].map(h=>(
-                          <th key={h} style={{padding:"9px 10px",textAlign:"left",fontSize:9,fontWeight:700,color:"#64748b",letterSpacing:.8,fontFamily:"monospace",borderBottom:"1.5px solid #e2e8f0"}}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {procGRNPO.items.map((it,idx)=>{
-                        const outstanding = (it.qty||0)-(it.received||0);
-                        return (
-                          <tr key={idx} style={{borderBottom:"1px solid #f1f5f9",background:outstanding===0?"#f0fdf4":"#fff"}}>
-                            <td style={{padding:"10px 10px",fontSize:12,fontWeight:600,color:"#0b1929"}}>{it.itemName}</td>
-                            <td style={{padding:"10px 10px",fontSize:11,color:"#64748b"}}>{it.unit}</td>
-                            <td style={{padding:"10px 10px",fontSize:12,fontFamily:"monospace",color:"#475569"}}>{it.qty}</td>
-                            <td style={{padding:"10px 10px",fontSize:12,fontFamily:"monospace",color:"#64748b"}}>{it.received||0}</td>
-                            <td style={{padding:"10px 10px",fontSize:12,fontFamily:"monospace",fontWeight:700,color:outstanding>0?"#b45309":"#15803d"}}>{outstanding}</td>
-                            <td style={{padding:"10px 10px",fontSize:11,fontFamily:"monospace",color:"#475569"}}>{it.batchNo||"—"}</td>
-                            <td style={{padding:"10px 10px",fontSize:11,fontFamily:"monospace",color:"#475569"}}>{it.expiryDate?fmtDate(it.expiryDate):"—"}</td>
-                            <td style={{padding:"10px 10px"}}>
-                              {outstanding>0
-                                ? <input type="number" min={0} max={outstanding}
-                                    value={procGRN[procGRNPO.id]?.[idx]||""}
-                                    onChange={e=>setProcGRN(prev=>({...prev,[procGRNPO.id]:{...(prev[procGRNPO.id]||{}),[idx]:e.target.value}}))}
-                                    placeholder="0"
-                                    style={{width:80,padding:"6px 9px",border:"1.5px solid #e2e8f0",borderRadius:7,fontFamily:"monospace",fontSize:13,textAlign:"center"}}/>
-                                : <span style={{fontSize:11,color:"#15803d",fontWeight:700}}>✓ Complete</span>
-                              }
-                            </td>
+                  {/* Line Items Table */}
+                  <Card style={{marginBottom:18}}>
+                    <div style={{fontSize:12,fontWeight:700,color:"#0b1929",marginBottom:14}}>Line Items — Enter Batch No., Expiry Date, Condition, and Quantity Received</div>
+                    <div style={{overflowX:"auto"}}>
+                      <table style={{width:"100%",borderCollapse:"collapse",minWidth:900}}>
+                        <thead>
+                          <tr style={{background:"#0b1929",color:"#fff"}}>
+                            {["#","Item","Unit","Ordered","Prev Rcvd","Outstanding","Batch No. *","Expiry Date","Condition","Qty to Receive"].map((h,i)=>(
+                              <th key={h} style={{padding:"9px 10px",textAlign:i>=3&&i<=5?"center":"left",fontSize:9,fontWeight:700,letterSpacing:.8,whiteSpace:"nowrap"}}>{h}</th>
+                            ))}
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                        </thead>
+                        <tbody>
+                          {procGRNPO.items.map((it,idx)=>{
+                            const outstanding = (it.qty||0)-(it.received||0);
+                            const entry = getGrnEntry(procGRNPO.id, idx);
+                            const isFull = outstanding === 0;
+                            const inpStyle = {padding:"6px 8px",border:"1.5px solid #e2e8f0",borderRadius:7,fontFamily:"monospace",fontSize:12,outline:"none",width:"100%",color:"#0b1929"};
+                            return (
+                              <tr key={idx} style={{borderBottom:"1px solid #f1f5f9",background:isFull?"#f0fdf4":"#fff"}}>
+                                <td style={{padding:"10px 10px",fontSize:11,color:"#94a3b8",width:30}}>{idx+1}</td>
+                                <td style={{padding:"10px 10px",fontSize:12,fontWeight:700,color:"#0b1929",minWidth:160}}>{it.itemName}</td>
+                                <td style={{padding:"10px 10px",fontSize:11,color:"#64748b"}}>{it.unit}</td>
+                                <td style={{padding:"10px 10px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}>{it.qty}</td>
+                                <td style={{padding:"10px 10px",fontSize:12,fontFamily:"monospace",textAlign:"center",color:"#64748b"}}>{it.received||0}</td>
+                                <td style={{padding:"10px 10px",fontSize:12,fontFamily:"monospace",fontWeight:700,textAlign:"center",color:outstanding>0?"#b45309":"#15803d"}}>{outstanding}</td>
 
-                  {procErr && <div style={{marginBottom:12,padding:"9px 14px",background:"#fef2f2",borderRadius:8,color:"#dc2626",fontSize:12,fontWeight:600}}>{procErr}</div>}
+                                {/* Batch No input */}
+                                <td style={{padding:"8px 8px",minWidth:120}}>
+                                  {isFull ? <span style={{fontSize:11,color:"#15803d",fontWeight:700}}>✓ Done</span>
+                                    : <input type="text" placeholder="e.g. BN-2025-001"
+                                        value={entry.batchNo||""}
+                                        onChange={e=>setGrnEntry(procGRNPO.id,idx,"batchNo",e.target.value)}
+                                        style={inpStyle}/>
+                                  }
+                                </td>
 
-                  <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-                    <button onClick={()=>{setProcGRNPO(null);setProcErr("");}} style={{padding:"9px 20px",border:"1.5px solid #e2e8f0",borderRadius:9,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,color:"#475569",background:"#fff"}}>Cancel</button>
-                    <button onClick={submitGRN} style={{padding:"9px 24px",border:"none",borderRadius:9,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,color:"#fff",background:"#059669"}}>✓ Post GRN & Update Stock</button>
+                                {/* Expiry Date input */}
+                                <td style={{padding:"8px 8px",minWidth:130}}>
+                                  {isFull ? "—"
+                                    : <input type="date"
+                                        value={entry.expiryDate||""}
+                                        onChange={e=>setGrnEntry(procGRNPO.id,idx,"expiryDate",e.target.value)}
+                                        style={inpStyle}/>
+                                  }
+                                </td>
+
+                                {/* Condition dropdown */}
+                                <td style={{padding:"8px 8px",minWidth:110}}>
+                                  {isFull ? "—"
+                                    : <select
+                                        value={entry.condition||"Good"}
+                                        onChange={e=>setGrnEntry(procGRNPO.id,idx,"condition",e.target.value)}
+                                        style={{...inpStyle,background:"#fff"}}>
+                                        <option>Good</option>
+                                        <option>Damaged</option>
+                                        <option>Short Delivery</option>
+                                      </select>
+                                  }
+                                </td>
+
+                                {/* Qty to receive input */}
+                                <td style={{padding:"8px 8px",minWidth:100}}>
+                                  {isFull
+                                    ? <span style={{fontSize:11,color:"#15803d",fontWeight:700}}>✓ Complete</span>
+                                    : <input type="number" min={0} max={outstanding} placeholder="0"
+                                        value={entry.qty||""}
+                                        onChange={e=>setGrnEntry(procGRNPO.id,idx,"qty",e.target.value)}
+                                        style={{...inpStyle,textAlign:"center",width:90}}/>
+                                  }
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Running total */}
+                    {(() => {
+                      const totalNow  = procGRNPO.items.reduce((s,_,idx)=>s+Math.min(Number(getGrnEntry(procGRNPO.id,idx).qty||0),(procGRNPO.items[idx].qty||0)-(procGRNPO.items[idx].received||0)),0);
+                      const totalVal  = procGRNPO.items.reduce((s,it,idx)=>s+Math.min(Number(getGrnEntry(procGRNPO.id,idx).qty||0),(it.qty||0)-(it.received||0))*(it.unitCost||0),0);
+                      return totalNow > 0 ? (
+                        <div style={{display:"flex",justifyContent:"flex-end",gap:20,marginTop:14,padding:"12px 16px",background:"#f0fdf4",borderRadius:10,fontSize:13}}>
+                          <span style={{color:"#64748b"}}>Units to receive: <strong style={{color:"#059669"}}>{totalNow}</strong></span>
+                          <span style={{color:"#64748b"}}>Value: <strong style={{color:"#059669"}}>{fmtMoney(totalVal)}</strong></span>
+                        </div>
+                      ) : null;
+                    })()}
+                  </Card>
+
+                  {/* Actions */}
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <button onClick={()=>{setProcGRNPO(null);setProcErr("");}}
+                      style={{padding:"10px 22px",border:"1.5px solid #e2e8f0",borderRadius:9,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,color:"#475569",background:"#fff"}}>
+                      ← Cancel
+                    </button>
+                    <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                      {procErr && <div style={{padding:"8px 14px",background:"#fef2f2",borderRadius:8,color:"#dc2626",fontSize:12,fontWeight:600}}>{procErr}</div>}
+                      <button
+                        onClick={()=>{
+                          const w = window.open("","_blank");
+                          if (!w) return;
+                          w.document.write(buildGRNDoc(procGRNPO, grnMeta, procGRN[procGRNPO.id]||{}));
+                          w.document.close();
+                        }}
+                        style={{padding:"10px 20px",border:"1.5px solid #059669",borderRadius:9,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,color:"#059669",background:"#fff",display:"flex",alignItems:"center",gap:6}}>
+                        🖨 Preview GRN
+                      </button>
+                      <button onClick={submitGRN}
+                        style={{padding:"10px 26px",border:"none",borderRadius:9,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:800,color:"#fff",background:"#059669",display:"flex",alignItems:"center",gap:6}}>
+                        ✓ Post GRN & Update Stock
+                      </button>
+                    </div>
                   </div>
-                </Card>
+                </>
               )}
             </div>
           )}
